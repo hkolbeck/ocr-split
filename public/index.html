@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Image and Message Board</title>
+    <style>
+        body {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            font-family: Arial, sans-serif;
+            background-color: #f0f0f0;
+        }
+
+        hr {
+            width: 80%;
+        }
+
+        .column {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            background-color: #fff;
+            border-radius: 10px;
+            padding: 20px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            width: 80%;
+            max-width: 800px;
+        }
+
+        .controls input[type="file"] {
+            margin-bottom: 10px;
+        }
+
+        .controls textarea {
+            width: 100%;
+            height: 60px;
+            resize: none;
+            padding: 10px;
+            margin-bottom: 10px;
+            border: 1px solid #ccc;
+            border-radius: 10px;
+        }
+
+        .controls button {
+            padding: 10px 20px;
+            background-color: #007BFF;
+            color: #fff;
+            border: none;
+            border-radius: 10px;
+            cursor: pointer;
+        }
+
+        .controls button:hover {
+            background-color: #0056b3;
+        }
+    </style>
+    <style>
+        #loading-spinner {
+            display: none;
+            position: relative;
+            align-content: space-around;
+            justify-content: center;
+        }
+
+        .loader-svg {
+            position: absolute;
+            left: 0;
+            right: 0;
+            top: 0;
+            bottom: 0;
+            fill: none;
+            stroke-width: 5px;
+            stroke-linecap: round;
+            stroke: rgb(64, 0, 148);
+        }
+
+        .loader-svg.bg {
+            stroke-width: 8px;
+            stroke: rgb(207, 205, 245);
+        }
+
+        .animate {
+            stroke-dasharray: 242.6;
+            animation: fill-animation 1s cubic-bezier(1, 1, 1, 1) 0s infinite;
+        }
+
+        @keyframes fill-animation {
+            0% {
+                stroke-dasharray: 40 242.6;
+                stroke-dashoffset: 0;
+            }
+            50% {
+                stroke-dasharray: 141.3;
+                stroke-dashoffset: 141.3;
+            }
+            100% {
+                stroke-dasharray: 40 242.6;
+                stroke-dashoffset: 282.6;
+            }
+        }
+    </style>
+    <style>
+        .edit {
+            visibility: hidden;
+        }
+    </style>
+</head>
+<body>
+<div class="edit">
+    <div style="margin: 5px; display: flex; justify-content: right">
+        <button>Ⓧ</button>
+    </div>
+    <canvas id="edit-canvas" height="0" width="0"></canvas>
+</div>
+<div class="column">
+    <div class="col-header">
+    </div>
+    <div class="input">
+        <div class="image-wrapper">
+            <div class="empty">
+                <button class="empty-button" onclick="document.getElementById('loadImage').click()">
+                    Paste or Open File
+                </button>
+            </div>
+            <div id="loading-spinner">
+                <svg class="svg-container" height="100" width="100" viewBox="0 0 100 100">
+                    <circle class="loader-svg bg" cx="50" cy="50" r="45"></circle>
+                    <circle class="loader-svg animate" cx="50" cy="50" r="45"></circle>
+                </svg>
+            </div>
+            <div class="ocr-img-wrapper">
+                <img class="img-to-ocr" src="" alt="Uploaded image">
+                <button onclick="openEdit()">✏️</button>
+            </div>
+        </div>
+        <div class="controls">
+            <div class="len-control">
+                <label>
+                    Max Alt Text Characters
+                    <br/>
+                    <select name="len-dropdown" class="len-dropdown">
+                        <option value="twitter">Twitter/X</option>
+                        <option value="ig">Instagram</option>
+                        <option value="fb">Facebook</option>
+                    </select>
+                    <input type="number" class="alt-len">
+                </label>
+            </div>
+            <input type="file" id="loadImage" accept="image/*">
+        </div>
+    </div>
+
+    <hr/>
+
+    <div class="parts">
+        <ul class="results"></ul>
+    </div>
+</div>
+
+<script>
+    const splitCanvas = document.createElement("canvas");
+    const ctx = splitCanvas.getContext('2d');
+    const loadImage = document.getElementById('loadImage');
+    const waitSpinner = document.getElementById("loading-spinner");
+    let currImageDataURL = null;
+
+    document.onpaste = function (event) {
+        const items = (event.clipboardData || event.originalEvent.clipboardData).items;
+        for (let item of items) {
+            if (item.kind === "file") {
+                ocrFile(item.getAsFile());
+            }
+        }
+    };
+
+    loadImage.addEventListener('change', (event) => {
+        const file = event.target.files[0];
+        if (file) {
+            waitSpinner.style.display = "flex";
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const img = new Image();
+                img.onload = () => {
+                    splitCanvas.style.backgroundImage = `url(${e.target.result})`;
+                };
+                ocrUrl(e.target.result);
+                img.src = e.target.result;
+                currImageDataURL = e.target.result;
+            };
+            reader.readAsDataURL(file);
+        }
+    });
+
+    async function ocrFile(file) {
+        const url = URL.createObjectURL(file);
+        return ocrUrl(url);
+    }
+
+    async function ocrUrl(url) {
+        const base64 = url.split(",")[1];
+        return fetch("/api/v1/ocr",
+            {
+                method: "POST",
+                body: base64,
+            })
+            .then(async (result) => {
+                if (result.ok) {
+                    const rawResp = await result.text();
+                    const resp = JSON.parse(rawResp);
+                    processResp(resp)
+                } else {
+                    console.log(result.status);
+                    if (result.status === 429) {
+                        alert("Global rate limit exceeded, try again")
+                    } else if (result.status === 413) {
+                        alert("File too large, limit is around 6MB")
+                    } else {
+                        alert("Unknown error")
+                    }
+                }
+            })
+            .catch((e) => {
+                console.log(e);
+            });
+    }
+
+    function processResp(resp) {
+        console.log(JSON.stringify(resp))
+    }
+
+    function makeResultPart(words) {
+
+    }
+
+    function cropToSection(minY, maxY) {
+
+    }
+
+    function openEdit() {
+    }
+</script>
+</body>
+</html>
